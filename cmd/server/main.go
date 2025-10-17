@@ -53,6 +53,38 @@ func main() {
 
 	fmt.Println("Published pause message successfully.")
 
+	q, err := ch.QueueDeclare(
+		routing.GameLogSlug,
+		true,  // durable
+		true,  // auto-delete
+		false, // exclusive
+		false, // no-wait
+		nil,   // arguments
+	)
+
+	if err != nil {
+		fmt.Printf("Failed to declare game log queue: %v\n", err)
+		return
+	}
+
+	bindingKey := routing.GameLogSlug + ".*"
+
+	err = ch.QueueBind(
+		q.Name,
+		bindingKey,
+		routing.ExchangePerilTopic,
+		false,
+		nil,
+	)
+
+	if err != nil {
+		fmt.Printf("Failed to bind game log queue: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Declared and bound durable queue %q to %q with key %q\n",
+		q.Name, routing.ExchangePerilTopic, bindingKey)
+
 	for {
 		words := gamelogic.GetInput()
 		if len(words) == 0 {
