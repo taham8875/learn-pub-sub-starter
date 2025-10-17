@@ -56,7 +56,7 @@ func main() {
 	q, err := ch.QueueDeclare(
 		routing.GameLogSlug,
 		true,  // durable
-		true,  // auto-delete
+		false, // auto-delete
 		false, // exclusive
 		false, // no-wait
 		nil,   // arguments
