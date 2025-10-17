@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
+	// "os"
+	// "os/signal"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -46,15 +46,55 @@ func main() {
 
 	defer ch.Close()
 
-	fmt.Printf("Created transient queue %s and bound to exchange %s with routing key %s\n", queue.Name, routing.ExchangePerilDirect, routing.PauseKey)
+	fmt.Printf("Created transient queue: %s\n", queue.Name)
+	fmt.Printf("Queue is bound to exchange '%s' with routing key '%s'\n",
+		routing.ExchangePerilDirect, routing.PauseKey)
 
-	// Wait for signal to exit
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, os.Kill)
+	gameState := gamelogic.NewGameState(username)
+	fmt.Printf("Game state created for user: %s\n", gameState.GetUsername())
 
-	// Block until signal is received
-	<-signalChan
+	for {
+		words := gamelogic.GetInput()
 
-	fmt.Println("Shutting down client...")
+		if len(words) == 0 {
+			continue
+		}
 
+		command := words[0]
+
+		switch command {
+		case "spawn":
+			err := gameState.CommandSpawn(words)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+		case "move":
+			_, err := gameState.CommandMove(words)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+		case "status":
+			gameState.CommandStatus()
+		case "help":
+			gamelogic.PrintClientHelp()
+		case "spam":
+			fmt.Printf("Spamming not allowed yet!\n")
+		case "quit":
+			gamelogic.PrintQuit()
+		default:
+			fmt.Printf("Unknown command: %s\n", command)
+			fmt.Println("Enter command (spawn, move, status, help, spam, quit): ")
+		}
+	}
+
+	// fmt.Printf("Created transient queue %s and bound to exchange %s with routing key %s\n", queue.Name, routing.ExchangePerilDirect, routing.PauseKey)
+	//
+	// // Wait for signal to exit
+	// signalChan := make(chan os.Signal, 1)
+	// signal.Notify(signalChan, os.Interrupt, os.Kill)
+	//
+	// // Block until signal is received
+	// <-signalChan
+	//
+	// fmt.Println("Shutting down client...")
 }
