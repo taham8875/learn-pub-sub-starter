@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
+	// "os"
+	// "os/signal"
 
+	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/routing"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -12,6 +13,8 @@ import (
 
 func main() {
 	fmt.Println("Starting Peril server...")
+
+	gamelogic.PrintServerHelp()
 
 	connectionString := "amqp://guest:guest@localhost:5672/"
 
@@ -43,7 +46,6 @@ func main() {
 		pauseState,
 	)
 
-
 	if err != nil {
 		fmt.Printf("Failed to publish pause state: %v\n", err)
 		return
@@ -51,13 +53,63 @@ func main() {
 
 	fmt.Println("Published pause message successfully.")
 
-	// wait for signal (any signal) to exit
+	for {
+		words := gamelogic.GetInput()
+		if len(words) == 0 {
+			continue
+		}
 
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, os.Kill)
+		command := words[0]
 
-	// block until a signal is received
-	<-signalChan
+		switch command {
+		case "pause":
+			fmt.Println("Pausing the game...")
+			pauseState := routing.PlayingState{
+				IsPaused: true,
+			}
 
-	fmt.Println("Shutting down server...")
+			err = pubsub.PublishJSON(
+				ch,
+				string(routing.ExchangePerilDirect),
+				string(routing.PauseKey),
+				pauseState,
+			)
+
+			if err != nil {
+				fmt.Printf("Failed to publish pause state: %v\n", err)
+			} else {
+				fmt.Println("Published pause message successfully.")
+			}
+
+		case "resume":
+			fmt.Println("Resuming the game...")
+
+			resumeState := routing.PlayingState{
+				IsPaused: false,
+			}
+
+			err = pubsub.PublishJSON(
+				ch,
+				string(routing.ExchangePerilDirect),
+				string(routing.PauseKey),
+				resumeState,
+			)
+
+		case "quit":
+			fmt.Println("Quitting the server...")
+			return
+		default:
+			fmt.Println("Unknown command. Available commands: pause, resume, quit")
+		}
+	}
+
+	// // wait for signal (any signal) to exit
+	//
+	// signalChan := make(chan os.Signal, 1)
+	// signal.Notify(signalChan, os.Interrupt, os.Kill)
+	//
+	// // block until a signal is received
+	// <-signalChan
+	//
+	// fmt.Println("Shutting down server...")
 }
