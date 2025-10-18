@@ -19,22 +19,73 @@ func handlePause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.AckT
 	}
 }
 
-func handleArmyMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.AckType {
+func handleArmyMove(gs *gamelogic.GameState, conn *amqp.Connection) func(gamelogic.ArmyMove) pubsub.AckType {
 	return func(move gamelogic.ArmyMove) pubsub.AckType {
 		defer fmt.Print("> ")
 		outcome := gs.HandleMove(move)
+
+		// if ware is decalred, publish war message
+		if outcome == gamelogic.MoveOutcomeMakeWar {
+			warMessage := gamelogic.RecognitionOfWar{
+				Attacker: move.Player,
+				Defender: gs.GetPlayerSnap(),
+			}
+
+			warRoutingKey := routing.WarRecognitionsPrefix + "." + gs.GetUsername()
+
+			fmt.Printf("Publishing war recognition message %v to routing key %s\n", warMessage, warRoutingKey)
+
+			ch, err := conn.Channel()
+
+			if err == nil {
+				err = pubsub.PublishJSON(ch, routing.ExchangePerilTopic, warRoutingKey, warMessage)
+
+				ch.Close()
+
+				if err != nil {
+					fmt.Printf("Failed to publish war recognition message: %v\n", err)
+				} else {
+					fmt.Printf("War recognition message published successfully to routing key %s\n", warRoutingKey)
+				}
+			}
+		}
 
 		// determine ack based on the outcome of the move
 		switch outcome {
 		case gamelogic.MoveOutComeSafe:
 			return pubsub.Ack
 		case gamelogic.MoveOutcomeMakeWar:
-			return pubsub.Ack
+			return pubsub.NackRequeue // This will cause requeue hell!
 		case gamelogic.MoveOutcomeSamePlayer:
 			return pubsub.NackDiscard
 		default:
 			return pubsub.NackDiscard
 		}
+	}
+}
+
+func handleWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.AckType {
+	return func(war gamelogic.RecognitionOfWar) pubsub.AckType {
+		defer fmt.Print("> ")
+
+		outcome, _, _ := gs.HandleWar(war)
+
+		switch outcome {
+		case gamelogic.WarOutcomeNotInvolved:
+			return pubsub.NackRequeue // Let another client handle it
+		case gamelogic.WarOutcomeNoUnits:
+			return pubsub.NackDiscard // Invalid war, discard
+		case gamelogic.WarOutcomeOpponentWon:
+			return pubsub.Ack // War resolved, acknowledge
+		case gamelogic.WarOutcomeYouWon:
+			return pubsub.Ack // War resolved, acknowledge
+		case gamelogic.WarOutcomeDraw:
+			return pubsub.Ack // War resolved, acknowledge
+		default:
+			fmt.Printf("Unknown war outcome: %v\n", outcome)
+			return pubsub.NackDiscard
+		}
+
 	}
 }
 
@@ -85,13 +136,34 @@ func main() {
 		armyMoveQueueName,
 		armyMoveRoutingKey,
 		pubsub.Transient,
-		handleArmyMove(gameState),
+		handleArmyMove(gameState, conn),
 	)
 
 	if err != nil {
 		fmt.Printf("Failed to subscribe to army move messages: %v\n", err)
 		return
 	}
+
+	fmt.Printf("Subscribed to army moves with queue %s and routing key %s\n", armyMoveQueueName, armyMoveRoutingKey)
+
+	warMoveQueueName := "war"
+	warMoveRoutingKey := routing.WarRecognitionsPrefix + ".*"
+
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilTopic,
+		warMoveQueueName,
+		warMoveRoutingKey,
+		pubsub.Durable,
+		handleWar(gameState),
+	)
+
+	if err != nil {
+		fmt.Printf("Failed to subscribe to war recognition messages: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Subscribed to war recognitions with queue %s and routing key %s\n", warMoveQueueName, warMoveRoutingKey)
 
 	for {
 		words := gamelogic.GetInput()

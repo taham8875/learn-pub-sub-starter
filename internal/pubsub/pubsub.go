@@ -165,8 +165,6 @@ func SubscribeJSON[T any](
 				delivery.Nack(false, false)
 				fmt.Println("Message Not Acknowledged - Discarded")
 			}
-
-			delivery.Ack(false)
 		}
 	}()
 
