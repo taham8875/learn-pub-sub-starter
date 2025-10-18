@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/bootdotdev/learn-pub-sub-starter/internal/routing"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -59,7 +60,9 @@ func DeclareAndBind(
 	// declare queue
 	var durable, autoDelete, exclusive bool
 	var noWait bool = false
-	var args amqp.Table = nil
+	args := amqp.Table{
+		"x-dead-letter-exchange": routing.ExchangePerilDeadLetter,
+	}
 
 	switch queueType {
 	case Durable:
