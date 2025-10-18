@@ -18,6 +18,13 @@ func handlePause(gs *gamelogic.GameState) func(routing.PlayingState) {
 	}
 }
 
+func handleArmyMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) {
+	return func(move gamelogic.ArmyMove) {
+		defer fmt.Print("> ")
+		gs.HandleMove(move)
+	}
+}
+
 func main() {
 	fmt.Println("Starting Peril client...")
 
@@ -55,6 +62,24 @@ func main() {
 		return
 	}
 
+	// Subscribe to army moves from other players
+	armyMoveQueueName := routing.ArmyMovesPrefix + "." + username
+	armyMoveRoutingKey := routing.ArmyMovesPrefix + ".*"
+
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilTopic,
+		armyMoveQueueName,
+		armyMoveRoutingKey,
+		pubsub.Transient,
+		handleArmyMove(gameState),
+	)
+
+	if err != nil {
+		fmt.Printf("Failed to subscribe to army move messages: %v\n", err)
+		return
+	}
+
 	for {
 		words := gamelogic.GetInput()
 
@@ -71,9 +96,32 @@ func main() {
 				fmt.Printf("Error: %v\n", err)
 			}
 		case "move":
-			_, err := gameState.CommandMove(words)
+			armyMove, err := gameState.CommandMove(words)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
+				continue
+			}
+
+			moveRoutingKey := routing.ArmyMovesPrefix + "." + username
+
+			ch, err := conn.Channel()
+			if err != nil {
+				fmt.Printf("Failed to open channel: %v\n", err)
+				continue
+			}
+
+			err = pubsub.PublishJSON(
+				ch,
+				routing.ExchangePerilTopic,
+				moveRoutingKey,
+				armyMove,
+			)
+
+			ch.Close()
+			if err != nil {
+				fmt.Printf("Failed to publish army move: %v\n", err)
+			} else {
+				fmt.Printf("Army move published successfully to routing key %s\n", moveRoutingKey)
 			}
 		case "status":
 			gameState.CommandStatus()
