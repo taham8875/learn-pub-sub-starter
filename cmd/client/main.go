@@ -11,6 +11,13 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+func handlePause(gs *gamelogic.GameState) func(routing.PlayingState) {
+	return func(ps routing.PlayingState) {
+		defer fmt.Print("> ")
+		gs.HandlePause(ps)
+	}
+}
+
 func main() {
 	fmt.Println("Starting Peril client...")
 
@@ -29,29 +36,24 @@ func main() {
 	defer conn.Close()
 	fmt.Printf("Connected to RabbitMQ as %s\n", username)
 
+	gameState := gamelogic.NewGameState(username)
+	fmt.Printf("Game state created for user: %s\n", gameState.GetUsername())
+
 	queueName := routing.PauseKey + "." + username
 
-	ch, queue, err := pubsub.DeclarAndBind(
+	err = pubsub.SubscribeJSON(
 		conn,
 		routing.ExchangePerilDirect,
 		queueName,
 		routing.PauseKey,
 		pubsub.Transient,
+		handlePause(gameState),
 	)
 
 	if err != nil {
-		fmt.Printf("Failed to declare and bind queue: %v\n", err)
+		fmt.Printf("Failed to subscribe to pause messages: %v\n", err)
 		return
 	}
-
-	defer ch.Close()
-
-	fmt.Printf("Created transient queue: %s\n", queue.Name)
-	fmt.Printf("Queue is bound to exchange '%s' with routing key '%s'\n",
-		routing.ExchangePerilDirect, routing.PauseKey)
-
-	gameState := gamelogic.NewGameState(username)
-	fmt.Printf("Game state created for user: %s\n", gameState.GetUsername())
 
 	for {
 		words := gamelogic.GetInput()

@@ -35,7 +35,7 @@ func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	)
 }
 
-func DeclarAndBind(
+func DeclareAndBind(
 	conn *amqp.Connection,
 	exchange, queueName, key string,
 	queueType SimpleQueueType,
@@ -91,5 +91,59 @@ func DeclarAndBind(
 	}
 
 	return ch, queue, nil
+}
+
+func SubscribeJSON[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+	handler func(T),
+) error {
+	ch, queue, err := DeclareAndBind(
+		conn,
+		exchange,
+		queueName,
+		key,
+		queueType,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	deliveries, err := ch.Consume(
+		queue.Name, // queueName
+		"",         // consumer (empty string means auto-generate a name)
+		false,      // autoAck
+		false,      // exclusive
+		false,      // noLocal
+		false,      // noWait
+		nil,        // args
+	)
+
+	if err != nil {
+		ch.Close()
+		return err
+	}
+
+	// start a goroutine to process deliveries
+	go func() {
+		defer ch.Close()
+		for delivery := range deliveries {
+			var message T
+			err := json.Unmarshal(delivery.Body, &message)
+			if err != nil {
+				continue
+			}
+
+			handler(message)
+
+			delivery.Ack(false)
+		}
+	}()
+
+	return nil
 
 }
