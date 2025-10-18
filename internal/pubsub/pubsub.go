@@ -3,12 +3,21 @@ package pubsub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // represents the type of queue either durable or transient
 type SimpleQueueType int
+
+type AckType int
+
+const (
+	Ack AckType = iota
+	NackRequeue
+	NackDiscard
+)
 
 const (
 	Durable SimpleQueueType = iota
@@ -99,7 +108,7 @@ func SubscribeJSON[T any](
 	queueName,
 	key string,
 	queueType SimpleQueueType,
-	handler func(T),
+	handler func(T) AckType,
 ) error {
 	ch, queue, err := DeclareAndBind(
 		conn,
@@ -135,10 +144,24 @@ func SubscribeJSON[T any](
 			var message T
 			err := json.Unmarshal(delivery.Body, &message)
 			if err != nil {
+				fmt.Println("Error unmarshaling message:", err)
+				delivery.Nack(false, false)
 				continue
 			}
 
-			handler(message)
+			ackType := handler(message)
+
+			switch ackType {
+			case Ack:
+				delivery.Ack(false)
+				fmt.Println("Message Acknowledged")
+			case NackRequeue:
+				delivery.Nack(false, true)
+				fmt.Println("Message Not Acknowledged - Requeued")
+			case NackDiscard:
+				delivery.Nack(false, false)
+				fmt.Println("Message Not Acknowledged - Discarded")
+			}
 
 			delivery.Ack(false)
 		}

@@ -11,17 +11,30 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func handlePause(gs *gamelogic.GameState) func(routing.PlayingState) {
-	return func(ps routing.PlayingState) {
+func handlePause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.AckType {
+	return func(ps routing.PlayingState) pubsub.AckType {
 		defer fmt.Print("> ")
 		gs.HandlePause(ps)
+		return pubsub.Ack
 	}
 }
 
-func handleArmyMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) {
-	return func(move gamelogic.ArmyMove) {
+func handleArmyMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.AckType {
+	return func(move gamelogic.ArmyMove) pubsub.AckType {
 		defer fmt.Print("> ")
-		gs.HandleMove(move)
+		outcome := gs.HandleMove(move)
+
+		// determine ack based on the outcome of the move
+		switch outcome {
+		case gamelogic.MoveOutComeSafe:
+			return pubsub.Ack
+		case gamelogic.MoveOutcomeMakeWar:
+			return pubsub.Ack
+		case gamelogic.MoveOutcomeSamePlayer:
+			return pubsub.NackDiscard
+		default:
+			return pubsub.NackDiscard
+		}
 	}
 }
 
