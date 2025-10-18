@@ -37,16 +37,20 @@ func handleArmyMove(gs *gamelogic.GameState, conn *amqp.Connection) func(gamelog
 
 			ch, err := conn.Channel()
 
-			if err == nil {
-				err = pubsub.PublishJSON(ch, routing.ExchangePerilTopic, warRoutingKey, warMessage)
+			if err != nil {
+				fmt.Printf("Failed to create channel for war message: %v\n", err)
+				return pubsub.NackRequeue // Requeue on channel creation failure
+			}
 
-				ch.Close()
+			err = pubsub.PublishJSON(ch, routing.ExchangePerilTopic, warRoutingKey, warMessage)
+			ch.Close()
 
-				if err != nil {
-					fmt.Printf("Failed to publish war recognition message: %v\n", err)
-				} else {
-					fmt.Printf("War recognition message published successfully to routing key %s\n", warRoutingKey)
-				}
+			if err != nil {
+				fmt.Printf("Failed to publish war recognition message: %v\n", err)
+				return pubsub.NackRequeue // Requeue on publish failure
+			} else {
+				fmt.Printf("War recognition message published successfully to routing key %s\n", warRoutingKey)
+				return pubsub.Ack // Successfully published war message, acknowledge the move
 			}
 		}
 
