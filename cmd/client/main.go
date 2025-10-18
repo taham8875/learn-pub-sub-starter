@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 	// "os"
 	// "os/signal"
 
@@ -68,11 +69,17 @@ func handleArmyMove(gs *gamelogic.GameState, conn *amqp.Connection) func(gamelog
 	}
 }
 
-func handleWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.AckType {
+func handleWar(gs *gamelogic.GameState, conn *amqp.Connection) func(gamelogic.RecognitionOfWar) pubsub.AckType {
 	return func(war gamelogic.RecognitionOfWar) pubsub.AckType {
 		defer fmt.Print("> ")
 
-		outcome, _, _ := gs.HandleWar(war)
+		outcome, winner, loser := gs.HandleWar(war)
+
+		err := publishGameLog(conn, gs, war, outcome, winner, loser)
+		if err != nil {
+			fmt.Printf("Failed to publish game log: %v\n", err)
+			return pubsub.NackRequeue
+		}
 
 		switch outcome {
 		case gamelogic.WarOutcomeNotInvolved:
@@ -91,6 +98,44 @@ func handleWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.
 		}
 
 	}
+}
+
+func publishGameLog(conn *amqp.Connection, gs *gamelogic.GameState, war gamelogic.RecognitionOfWar, outcome gamelogic.WarOutcome, winner string, loser string) error {
+	var message string
+
+	switch outcome {
+	case gamelogic.WarOutcomeOpponentWon, gamelogic.WarOutcomeYouWon:
+		message = fmt.Sprintf("%s won a war against %s", winner, loser)
+	case gamelogic.WarOutcomeDraw:
+		message = fmt.Sprintf("A war between %s and %s resulted in a draw", winner, loser)
+	default:
+		// Don't log wars that aren't resolved or aren't involved
+		return nil
+	}
+
+	gameLog := routing.GameLog{
+		CurrentTime: time.Now(),
+		Message:     message,
+		Username:    war.Attacker.Username,
+	}
+
+	ch, err := conn.Channel()
+
+	if err != nil {
+		return err
+	}
+
+	defer ch.Close()
+
+	routingKey := routing.GameLogSlug + "." + war.Attacker.Username
+
+	err = pubsub.PublishGob(ch, routing.ExchangePerilTopic, routingKey, gameLog)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Published game log: %s\n", message)
+	return nil
 }
 
 func main() {
@@ -159,7 +204,7 @@ func main() {
 		warMoveQueueName,
 		warMoveRoutingKey,
 		pubsub.Durable,
-		handleWar(gameState),
+		handleWar(gameState, conn),
 	)
 
 	if err != nil {
