@@ -11,6 +11,21 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+func handleGameLog() func(routing.GameLog) pubsub.AckType {
+	return func(log routing.GameLog) pubsub.AckType {
+		defer fmt.Print("> ")
+
+		err := gamelogic.WriteLog(log)
+		if err != nil {
+			fmt.Printf("Failed to write log to disk: %v\n", err)
+			return pubsub.NackRequeue // Requeue on write failure
+		}
+
+		fmt.Printf("Log written to disk: %s\n", log.Message)
+		return pubsub.Ack
+	}
+}
+
 func main() {
 	fmt.Println("Starting Peril server...")
 
@@ -53,37 +68,20 @@ func main() {
 
 	fmt.Println("Published pause message successfully.")
 
-	q, err := ch.QueueDeclare(
-		routing.GameLogSlug,
-		true,  // durable
-		false, // auto-delete
-		false, // exclusive
-		false, // no-wait
-		nil,   // arguments
-	)
-
-	if err != nil {
-		fmt.Printf("Failed to declare game log queue: %v\n", err)
-		return
-	}
-
-	bindingKey := routing.GameLogSlug + ".*"
-
-	err = ch.QueueBind(
-		q.Name,
-		bindingKey,
+	err = pubsub.SubscribeGob(
+		conn,
 		routing.ExchangePerilTopic,
-		false,
-		nil,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.Durable,
+		handleGameLog(),
 	)
 
 	if err != nil {
-		fmt.Printf("Failed to bind game log queue: %v\n", err)
+		fmt.Printf("Failed to subscribe to game logs: %v\n", err)
 		return
 	}
-
-	fmt.Printf("Declared and bound durable queue %q to %q with key %q\n",
-		q.Name, routing.ExchangePerilTopic, bindingKey)
+	fmt.Println("Subscribed to game logs.")
 
 	for {
 		words := gamelogic.GetInput()

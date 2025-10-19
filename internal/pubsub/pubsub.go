@@ -107,6 +107,7 @@ func DeclareAndBind(
 	return ch, queue, nil
 }
 
+// SubscribeJSON sets up a consumer to receive JSON messages from a queue
 func SubscribeJSON[T any](
 	conn *amqp.Connection,
 	exchange,
@@ -115,26 +116,89 @@ func SubscribeJSON[T any](
 	queueType SimpleQueueType,
 	handler func(T) AckType,
 ) error {
+	return subscribe(conn, exchange, queueName, key, queueType, handler, func(data []byte) (T, error) {
+		var message T
+		err := json.Unmarshal(data, &message)
+		return message, err
+	})
+}
+
+func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+	err := encoder.Encode(val)
+	if err != nil {
+		return err
+	}
+
+	return ch.PublishWithContext(
+		context.Background(),
+		exchange,
+		key,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/gob",
+			Body:        buf.Bytes(),
+		},
+	)
+}
+
+// SubscribeGob sets up a consumer to receive gob-encoded messages from a queue
+func SubscribeGob[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+	handler func(T) AckType,
+) error {
+	return subscribe(conn, exchange, queueName, key, queueType, handler, func(data []byte) (T, error) {
+		var message T
+		var buf bytes.Buffer
+		buf.Write(data)
+		decoder := gob.NewDecoder(&buf)
+		err := decoder.Decode(&message)
+		return message, err
+	})
+}
+
+// Helper function to share duplicate code between SubscribeJSON and SubscribeGob
+func subscribe[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	simpleQueueType SimpleQueueType,
+	handler func(T) AckType,
+	unmarshaller func([]byte) (T, error),
+) error {
 	ch, queue, err := DeclareAndBind(
 		conn,
 		exchange,
 		queueName,
 		key,
-		queueType,
+		simpleQueueType,
 	)
 
 	if err != nil {
 		return err
 	}
 
+	err = ch.Qos(10, 0, false)
+	if err != nil {
+		ch.Close()
+		return err
+	}
+
 	deliveries, err := ch.Consume(
-		queue.Name, // queueName
-		"",         // consumer (empty string means auto-generate a name)
-		false,      // autoAck
-		false,      // exclusive
-		false,      // noLocal
-		false,      // noWait
-		nil,        // args
+		queue.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
 	)
 
 	if err != nil {
@@ -146,8 +210,7 @@ func SubscribeJSON[T any](
 	go func() {
 		defer ch.Close()
 		for delivery := range deliveries {
-			var message T
-			err := json.Unmarshal(delivery.Body, &message)
+			message, err := unmarshaller(delivery.Body)
 			if err != nil {
 				fmt.Println("Error unmarshaling message:", err)
 				delivery.Nack(false, false)
@@ -171,25 +234,4 @@ func SubscribeJSON[T any](
 	}()
 
 	return nil
-}
-
-func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
-	var buf bytes.Buffer
-	encoder := gob.NewEncoder(&buf)
-	err := encoder.Encode(val)
-	if err != nil {
-		return err
-	}
-
-	return ch.PublishWithContext(
-		context.Background(),
-		exchange,
-		key,
-		false,
-		false,
-		amqp.Publishing{
-			ContentType: "application/gob",
-			Body:        buf.Bytes(),
-		},
-	)
 }

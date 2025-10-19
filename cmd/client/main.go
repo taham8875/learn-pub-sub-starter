@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"time"
+
 	// "os"
 	// "os/signal"
 
@@ -108,8 +110,11 @@ func publishGameLog(conn *amqp.Connection, gs *gamelogic.GameState, war gamelogi
 		message = fmt.Sprintf("%s won a war against %s", winner, loser)
 	case gamelogic.WarOutcomeDraw:
 		message = fmt.Sprintf("A war between %s and %s resulted in a draw", winner, loser)
+	case gamelogic.WarOutcomeNotInvolved:
+		// Don't log wars where this client is not involved
+		return nil
 	default:
-		// Don't log wars that aren't resolved or aren't involved
+		// Don't log other outcomes
 		return nil
 	}
 
@@ -262,7 +267,45 @@ func main() {
 		case "help":
 			gamelogic.PrintClientHelp()
 		case "spam":
-			fmt.Printf("Spamming not allowed yet!\n")
+			if len(words) < 2 {
+				fmt.Println("Usage: spam <number_of_moves>")
+				continue
+			}
+
+			n, err := strconv.Atoi(words[1])
+			if err != nil {
+				fmt.Printf("Invalid number: %v\n", err)
+				continue
+			}
+
+			fmt.Printf("Spamming %d moves...\n", n)
+
+			ch, err := conn.Channel()
+			if err != nil {
+				fmt.Printf("Failed to open channel: %v\n", err)
+				continue
+			}
+
+			for i := 0; i < n; i++ {
+				maliciousLog := gamelogic.GetMaliciousLog()
+
+				gameLog := routing.GameLog{
+					CurrentTime: time.Now(),
+					Message:     maliciousLog,
+					Username:    username,
+				}
+
+				routingKey := routing.GameLogSlug + "." + username
+
+				err = pubsub.PublishGob(ch, routing.ExchangePerilTopic, routingKey, gameLog)
+				if err != nil {
+					fmt.Printf("Failed to publish malicious log %d: %v\n", i+1, err)
+				}
+
+			}
+
+			ch.Close()
+			fmt.Printf("Finished spamming %d moves.\n", n)
 		case "quit":
 			gamelogic.PrintQuit()
 		default:
